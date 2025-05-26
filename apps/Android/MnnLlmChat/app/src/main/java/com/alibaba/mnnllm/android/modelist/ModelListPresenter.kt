@@ -68,7 +68,16 @@ class ModelListPresenter(private val context: Context, private val view: ModelLi
         }
         for (repoItem in hfModelItems) {
             val modelItemDownloadState = ModelItemDownloadState()
-            modelItemDownloadState.downloadInfo = modelDownloadManager.getDownloadInfo(repoItem.modelId!!)
+            if (repoItem.isLocal) {
+                val localDownloadInfo = DownloadInfo()
+                localDownloadInfo.downlodaState = DownloadInfo.DownloadSate.COMPLETED
+                localDownloadInfo.progressStage = context.getString(R.string.model_status_local) // Using a string resource
+                localDownloadInfo.totalBytes = 1L // Placeholder
+                localDownloadInfo.downloadedBytes = 1L // Placeholder
+                modelItemDownloadState.downloadInfo = localDownloadInfo
+            } else {
+                modelItemDownloadState.downloadInfo = modelDownloadManager.getDownloadInfo(repoItem.modelId!!)
+            }
             modelItemDownloadStatesMap[repoItem.modelId!!] = modelItemDownloadState
         }
         return modelItemDownloadStatesMap

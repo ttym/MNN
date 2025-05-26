@@ -5,11 +5,13 @@ package com.alibaba.mnnllm.android
 import android.app.Application
 import com.alibaba.mls.api.ApplicationProvider
 import com.alibaba.mnnllm.android.utils.CrashUtil
+import com.alibaba.mnnllm.android.utils.ModelUtils
 
 class MnnLlmApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         ApplicationProvider.set(this)
         CrashUtil.init(this)
+        ModelUtils.init(this)
     }
 }

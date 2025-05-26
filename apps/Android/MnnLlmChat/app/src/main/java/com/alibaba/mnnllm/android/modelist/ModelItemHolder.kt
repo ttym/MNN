@@ -80,6 +80,21 @@ class ModelItemHolder(itemView: View, private val modelItemListener: ModelItemLi
                 ) else headerText
             tvModelName.visibility = View.VISIBLE
         }
+
+        if (hfModelItem.isLocal) {
+            // For local models, show "Local" status and hide download-related UI
+            // It's good practice to use a string resource for "Local"
+            // e.g., tvStatus.text = itemView.context.getString(R.string.model_status_local)
+            // For now, using the progressStage set in ModelListPresenter if available, or "Local".
+            val localStatusText = modelItemDownloadState?.downloadInfo?.progressStage ?: itemView.context.getString(R.string.model_status_local_fallback)
+            tvStatus.text = localStatusText
+            iconDownload.visibility = View.GONE
+            progressBar.visibility = View.GONE
+            // The general onClick listener in init block handles running the model.
+            // Long click listener might need adjustment if certain options don't apply to local models.
+            return // Skip further processing for local models
+        }
+
         if (modelItemDownloadState == null) {
             progressBar.visibility = View.GONE
             tvStatus.text = ""
@@ -176,14 +191,35 @@ class ModelItemHolder(itemView: View, private val modelItemListener: ModelItemLi
         }
         val modelItemState = this.modelItemDownloadState ?: return true
         val downloadState = modelItemState.downloadInfo!!.downlodaState
-        if (downloadState != DownloadInfo.DownloadSate.COMPLETED && downloadState != DownloadInfo.DownloadSate.PAUSED && downloadState != DownloadInfo.DownloadSate.FAILED) {
+        // For local models, onLongClick might behave differently or be disabled.
+        // The existing onLongClick logic primarily deals with download states.
+        // If hfModelItem.isLocal is true, some menu items might not be applicable.
+        val hfModelItem = itemView.tag as ModelItem? // Safe cast
+        if (hfModelItem != null && hfModelItem.isLocal) {
+            // For local models, only "Delete" might be relevant if we implement
+            // a way to remove them from ModelUtils.localModelList and persisted storage.
+            // Hiding download-specific options.
+            popupMenu.menu.findItem(R.id.menu_pause_download).isVisible = false
+            popupMenu.menu.findItem(R.id.menu_start_download).isVisible = false
+            // Decide if delete should be visible for local models.
+            // For now, let's assume delete means removing from server/cache, so hide for local.
+            // If "delete" for local means removing from user's list, this logic would change.
+             popupMenu.menu.findItem(R.id.menu_delete_model).isVisible = false // Or handle deletion of local model
+        } else if (modelItemState != null) { // Existing logic for non-local models
+            val downloadState = modelItemState.downloadInfo!!.downlodaState
+            if (downloadState != DownloadInfo.DownloadSate.COMPLETED && downloadState != DownloadInfo.DownloadSate.PAUSED && downloadState != DownloadInfo.DownloadSate.FAILED) {
+                popupMenu.menu.findItem(R.id.menu_delete_model).setVisible(false)
+            }
+            if (downloadState != DownloadInfo.DownloadSate.DOWNLOADING) {
+                popupMenu.menu.findItem(R.id.menu_pause_download).setVisible(false)
+            }
+            if (downloadState != DownloadInfo.DownloadSate.PAUSED && downloadState != DownloadInfo.DownloadSate.NOT_START && downloadState != DownloadInfo.DownloadSate.FAILED
+            ) {
+                popupMenu.menu.findItem(R.id.menu_start_download).setVisible(false)
+            }
+        } else { // No state, hide all dynamic options
             popupMenu.menu.findItem(R.id.menu_delete_model).setVisible(false)
-        }
-        if (downloadState != DownloadInfo.DownloadSate.DOWNLOADING) {
             popupMenu.menu.findItem(R.id.menu_pause_download).setVisible(false)
-        }
-        if (downloadState != DownloadInfo.DownloadSate.PAUSED && downloadState != DownloadInfo.DownloadSate.NOT_START && downloadState != DownloadInfo.DownloadSate.FAILED
-        ) {
             popupMenu.menu.findItem(R.id.menu_start_download).setVisible(false)
         }
         popupMenu.show()

@@ -51,8 +51,19 @@ class LlmSession (
         }
         var rootCacheDir: String? = ""
         if (ModelPreferences.useMmap(ApplicationProvider.get(), modelId)) {
-            rootCacheDir = FileUtils.getMmapDir(modelId, configPath.contains("modelscope"))
-            File(rootCacheDir).mkdirs()
+            val modelFile = File(configPath)
+            if (modelFile.isDirectory) { // Check if configPath is a local model directory
+                // For local models, create mmap cache inside the model's directory
+                val mmapCacheDir = File(configPath, ".mmap_cache")
+                if (!mmapCacheDir.exists()) {
+                    mmapCacheDir.mkdirs()
+                }
+                rootCacheDir = mmapCacheDir.absolutePath
+            } else {
+                // Existing logic for non-local (e.g., ModelScope) models
+                rootCacheDir = FileUtils.getMmapDir(modelId, configPath.contains("modelscope"))
+                File(rootCacheDir).mkdirs()
+            }
         }
         val useOpencl = ModelPreferences.getBoolean(
                 ApplicationProvider.get(),

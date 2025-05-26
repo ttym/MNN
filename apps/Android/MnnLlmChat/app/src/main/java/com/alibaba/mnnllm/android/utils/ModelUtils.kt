@@ -3,11 +3,27 @@
 package com.alibaba.mnnllm.android.utils
 
 import android.annotation.SuppressLint
+import android.content.Context
+import android.content.SharedPreferences
 import com.alibaba.mls.api.ModelItem
 import com.alibaba.mnnllm.android.R
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import java.util.Locale
 
 object ModelUtils {
+
+    private const val PREFS_NAME = "UserLocalModels"
+    private const val KEY_LOCAL_MODELS = "localModels"
+    private lateinit var sharedPreferences: SharedPreferences
+    private val gson = Gson()
+
+    // Call this method from your Application class or main activity
+    fun init(context: Context) {
+        sharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        loadUserDefinedLocalModels()
+    }
+
     fun getDrawableId(modelName: String?): Int {
         if (modelName == null) {
             return 0
@@ -74,13 +90,11 @@ object ModelUtils {
      * to load local models
      */
     private val localModelList = mutableListOf<ModelItem>()
-//    private val localModelList = mutableListOf(
-//        ModelItem.fromLocalModel("Qwen-Omni-7B", "/data/local/tmp/mnn_bench/Qwen2.5-Omni-7B-MNN"),
-//        ModelItem.fromLocalModel("Qwen-Omni-3B", "/data/local/tmp/mnn_bench/Qwen2.5-Omni-3B-MNN"),
-//        ModelItem.fromLocalModel("Qwen3-30B-A3B-MNN", "/data/local/tmp/mnn_bench/Qwen3-30B-A3B-MNN")
-//    )
 
     init {
+        // Load user-defined models during initialization
+        // Ensure init(context) is called before this object is used
+        // loadUserDefinedLocalModels() // Now called explicitly after context is available
         blackList.add("taobao-mnn/bge-large-zh-MNN") //embedding
         blackList.add("taobao-mnn/gte_sentence-embedding_multilingual-base-MNN") //embedding
         blackList.add("taobao-mnn/QwQ-32B-Preview-MNN") //too big
@@ -220,5 +234,49 @@ object ModelUtils {
 
     fun supportAudioOutput(modelName: String): Boolean {
         return isOmni(modelName)
+    }
+
+    private fun saveUserDefinedLocalModels() {
+        if (!::sharedPreferences.isInitialized) return // Ensure sharedPreferences is initialized
+
+        val modelsToSave = localModelList.filter { it.isLocal && it.extras["userDefined"] == "true" }
+            .map { Pair(it.name, it.localPath) }
+        val json = gson.toJson(modelsToSave)
+        sharedPreferences.edit().putString(KEY_LOCAL_MODELS, json).apply()
+    }
+
+    private fun loadUserDefinedLocalModels() {
+        if (!::sharedPreferences.isInitialized) return // Ensure sharedPreferences is initialized
+
+        val json = sharedPreferences.getString(KEY_LOCAL_MODELS, null)
+        if (json != null) {
+            val type = object : TypeToken<List<Pair<String, String>>>() {}.type
+            val savedModels: List<Pair<String, String>> = gson.fromJson(json, type)
+            savedModels.forEach { (name, path) ->
+                val modelItem = ModelItem.fromLocalModel(name, path)
+                modelItem.extras["userDefined"] = "true" // Mark as user-defined
+                if (!localModelList.any { it.modelId == modelItem.modelId }) {
+                    localModelList.add(modelItem)
+                }
+            }
+        }
+    }
+
+    fun addUserDefinedLocalModel(name: String, path: String) {
+        val modelItem = ModelItem.fromLocalModel(name, path)
+        modelItem.extras["userDefined"] = "true" // Mark as user-defined
+
+        // Avoid duplicates based on modelId, which is derived from name and path in fromLocalModel
+        if (localModelList.none { it.modelId == modelItem.modelId }) {
+            localModelList.add(0, modelItem) // Add to the beginning of the list
+            saveUserDefinedLocalModels()
+        }
+    }
+
+    fun removeUserDefinedLocalModel(modelId: String) {
+        val removed = localModelList.removeAll { it.modelId == modelId && it.extras["userDefined"] == "true" }
+        if (removed) {
+            saveUserDefinedLocalModels()
+        }
     }
 }
