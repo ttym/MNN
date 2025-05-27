@@ -2,9 +2,18 @@
 // Copyright (c) 2024 Alibaba Group Holding Limited All rights reserved.
 package com.alibaba.mnnllm.android.modelist
 
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
+import android.widget.EditText
+import androidx.documentfile.provider.DocumentFile
+import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
 import android.view.Menu
 import android.view.MenuInflater
 import android.view.MenuItem
@@ -12,10 +21,14 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.appcompat.widget.SearchView
+import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.MenuHost
 import androidx.core.view.MenuProvider
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
+import com.google.android.material.floatingactionbutton.FloatingActionButton
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.alibaba.mls.api.ModelItem
@@ -26,6 +39,7 @@ import com.alibaba.mnnllm.android.utils.CrashUtil
 import com.alibaba.mnnllm.android.utils.PreferenceUtils.isFilterDownloaded
 import com.alibaba.mnnllm.android.utils.PreferenceUtils.setFilterDownloaded
 import com.alibaba.mnnllm.android.utils.RouterUtils.startActivity
+import com.alibaba.mnnllm.android.utils.ModelUtils
 
 class ModelListFragment : Fragment(), ModelListContract.View {
     private lateinit var modelListRecyclerView: RecyclerView
@@ -42,6 +56,143 @@ class ModelListFragment : Fragment(), ModelListContract.View {
 
     private var filterDownloaded = false
     private var filterQuery = ""
+
+    private lateinit var openDirectoryLauncher: ActivityResultLauncher<Intent>
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        openDirectoryLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                result.data?.data?.also { uri ->
+                    try {
+                        requireActivity().contentResolver.takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        )
+                        // For now, just show the URI.
+                        // In a future step, this URI will be used to add the model via ModelUtils.
+                        // Toast.makeText(requireContext(), "Selected directory URI: $uri", Toast.LENGTH_LONG).show()
+                        Log.i("ModelListFragment", "Selected directory URI: $uri, attempting to process.")
+                        promptForModelNameAndCopy(uri)
+                    } catch (e: SecurityException) {
+                        Log.e("ModelListFragment", "Failed to take persistable URI permission for $uri", e)
+                        Toast.makeText(requireContext(), "Failed to get permissions for the selected directory.", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun copyDirectoryFromUri(context: Context, sourceTreeUri: Uri, destinationParentDir: File, modelName: String): File? {
+        val sourceDocument = DocumentFile.fromTreeUri(context, sourceTreeUri) ?: return null
+        // Use the user-chosen modelName for the destination directory
+        val destinationDir = File(destinationParentDir, modelName)
+
+        if (destinationDir.exists()) {
+            // Overwrite existing directory
+            destinationDir.deleteRecursively()
+        }
+        if (!destinationDir.mkdirs()) {
+            Log.e("CopyDir", "Failed to create destination directory: ${destinationDir.absolutePath}")
+            return null
+        }
+
+        var success = true // Flag to track overall success
+
+        fun copyFile(sourceFile: DocumentFile, destFile: File) {
+            try {
+                context.contentResolver.openInputStream(sourceFile.uri)?.use { inputStream ->
+                    FileOutputStream(destFile).use { outputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("CopyDir", "Error copying file ${sourceFile.name} to ${destFile.name}", e)
+                success = false // Mark as failed if any file copy fails
+                // Optionally, re-throw or handle more gracefully (e.g., collect all errors)
+            }
+        }
+
+        fun copyRecursive(currentSourceDir: DocumentFile, currentDestDir: File) {
+            if (!success) return // Stop recursion if a failure occurred
+
+            currentSourceDir.listFiles().forEach { entry ->
+                if (!success) return@forEach
+
+                val destEntry = File(currentDestDir, entry.name!!)
+                if (entry.isDirectory) {
+                    if (destEntry.mkdirs()) {
+                        copyRecursive(entry, destEntry)
+                    } else {
+                        Log.e("CopyDir", "Failed to create subdirectory ${destEntry.absolutePath}")
+                        success = false
+                    }
+                } else if (entry.isFile) {
+                    copyFile(entry, destEntry)
+                }
+            }
+        }
+
+        copyRecursive(sourceDocument, destinationDir)
+
+        return if (success && destinationDir.exists() && (destinationDir.listFiles()?.isNotEmpty() == true || sourceDocument.listFiles().isEmpty())) {
+             // Consider successful if no errors and dest dir exists and is not empty (unless source was empty)
+            destinationDir
+        } else {
+            // Clean up destinationDir if copy failed significantly
+            if (destinationDir.exists()) {
+                destinationDir.deleteRecursively()
+            }
+            null
+        }
+    }
+
+
+    private fun promptForModelNameAndCopy(sourceUri: Uri) {
+        val context = requireContext()
+        val documentFile = DocumentFile.fromTreeUri(context, sourceUri)
+        val defaultModelName = documentFile?.name ?: "MyModel_${System.currentTimeMillis()}"
+
+        val editText = EditText(context).apply {
+            setText(defaultModelName)
+            setHint("Enter model name")
+        }
+
+        AlertDialog.Builder(context)
+            .setTitle("Name Your Model")
+            .setView(editText)
+            .setPositiveButton("OK") { dialog, _ ->
+                val chosenName = editText.text.toString().trim()
+                if (chosenName.isEmpty()) {
+                    Toast.makeText(context, "Model name cannot be empty.", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+
+                // Define the parent directory for all local models
+                val localModelsBaseDir = File(context.filesDir, "local_models")
+                if (!localModelsBaseDir.exists() && !localModelsBaseDir.mkdirs()) {
+                    Toast.makeText(context, "Failed to create base local models directory.", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+
+                val newModelDir = copyDirectoryFromUri(context, sourceUri, localModelsBaseDir, chosenName)
+
+                if (newModelDir != null && newModelDir.exists()) {
+                    ModelUtils.addUserDefinedLocalModel(chosenName, newModelDir.absolutePath)
+                    Toast.makeText(context, "Model '$chosenName' added successfully.", Toast.LENGTH_LONG).show()
+                    // Refresh the model list
+                    modelListPresenter?.load() // Re-trigger load to refresh the list including local models
+                } else {
+                    Toast.makeText(context, "Failed to copy model files for '$chosenName'.", Toast.LENGTH_LONG).show()
+                }
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel") { dialog, _ ->
+                Toast.makeText(context, "Add model cancelled.", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+            }
+            .show()
+    }
 
     private fun setupSearchView(menu: Menu) {
         val searchItem = menu.findItem(R.id.action_search)
@@ -179,6 +330,22 @@ class ModelListFragment : Fragment(), ModelListContract.View {
         super.onViewCreated(view, savedInstanceState)
         val menuHost: MenuHost = requireActivity()
         menuHost.addMenuProvider(menuProvider, viewLifecycleOwner, Lifecycle.State.RESUMED)
+
+        val fabAddLocalModel: FloatingActionButton = view.findViewById(R.id.fab_add_local_model)
+        fabAddLocalModel.setOnClickListener {
+            // Launch the directory picker
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            // Optionally, specify an initial URI to start browsing from
+            // intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri)
+            try {
+                openDirectoryLauncher.launch(intent)
+            } catch (e: Exception) {
+                Log.e("ModelListFragment", "Failed to launch directory picker", e)
+                Toast.makeText(requireContext(), "Could not open directory picker.", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     override fun onDestroyView() {
