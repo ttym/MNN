@@ -152,11 +152,12 @@ class ModelListPresenter(private val context: Context, private val view: ModelLi
 
 
     private fun onListAvailable(hfModelItems: List<ModelItem>, onSuccess: Runnable?) {
-        val hfRepoItemsProcessed = processList(hfModelItems)
-        for (item in hfModelItems) {
-            modelDownloadManager.getDownloadInfo(item.modelId!!)
-        }
-        modelListAdapter!!.updateItems(hfRepoItemsProcessed, getModelItemState(hfModelItems))
+        val hfRepoItemsProcessed = processList(hfModelItems) // This now correctly includes local models from ModelUtils.localModelList
+
+        // Pass the processed list (which includes local models) to getModelItemState
+        val modelStates = getModelItemState(hfRepoItemsProcessed)
+        
+        modelListAdapter!!.updateItems(hfRepoItemsProcessed, modelStates)
         onSuccess?.run()
         view.onListAvailable()
     }
