@@ -18,6 +18,9 @@ object ModelUtils {
     private lateinit var sharedPreferences: SharedPreferences
     private val gson = Gson()
 
+    // Simple data class for robust serialization
+    data class LocalModelEntry(val modelId: String, val name: String, val path: String)
+
     // Call this method from your Application class or main activity
     fun init(context: Context) {
         sharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -237,45 +240,77 @@ object ModelUtils {
     }
 
     private fun saveUserDefinedLocalModels() {
-        if (!::sharedPreferences.isInitialized) return // Ensure sharedPreferences is initialized
+        if (!::sharedPreferences.isInitialized) return
 
-        val modelsToSave = localModelList.filter { it.isLocal && it.extras["userDefined"] == "true" }
-            .map { Pair(it.name, it.localPath) }
-        val json = gson.toJson(modelsToSave)
+        // Convert ModelItem list to List<LocalModelEntry> for serialization
+        val entriesToSave = localModelList.mapNotNull { item ->
+            // Ensure item.name and item.localPath are not null, modelId should also be reliable
+            if (item.modelId != null && item.name != null && item.localPath != null) {
+                LocalModelEntry(item.modelId!!, item.name!!, item.localPath!!)
+            } else {
+                // Log or handle items with missing critical information
+                Log.w("ModelUtils", "Skipping saving model item with missing info: $item")
+                null
+            }
+        }
+        val json = gson.toJson(entriesToSave)
         sharedPreferences.edit().putString(KEY_LOCAL_MODELS, json).apply()
     }
 
     private fun loadUserDefinedLocalModels() {
-        if (!::sharedPreferences.isInitialized) return // Ensure sharedPreferences is initialized
+        if (!::sharedPreferences.isInitialized) return
 
         val json = sharedPreferences.getString(KEY_LOCAL_MODELS, null)
         if (json != null) {
-            val type = object : TypeToken<List<Pair<String, String>>>() {}.type
-            val savedModels: List<Pair<String, String>> = gson.fromJson(json, type)
-            savedModels.forEach { (name, path) ->
-                val modelItem = ModelItem.fromLocalModel(name, path)
-                modelItem.extras["userDefined"] = "true" // Mark as user-defined
-                if (!localModelList.any { it.modelId == modelItem.modelId }) {
-                    localModelList.add(modelItem)
+            try {
+                val type = object : TypeToken<List<LocalModelEntry>>() {}.type
+                val loadedEntries: List<LocalModelEntry> = gson.fromJson(json, type)
+                
+                localModelList.clear() // Clear current list before loading
+                loadedEntries.forEach { entry ->
+                    val modelItem = ModelItem.fromLocalModel(entry.name, entry.path)
+                    // The modelId from fromLocalModel might differ from entry.modelId if it was custom.
+                    // For user-defined local models, entry.name and entry.path are primary.
+                    // If entry.modelId needs to be preserved strictly, and ModelItem.modelId is mutable:
+                    // modelItem.modelId = entry.modelId // This depends on ModelItem's mutability
+                    
+                    // Add to list, ensuring no duplicates based on the new modelId from fromLocalModel
+                    if (!localModelList.any { it.modelId == modelItem.modelId }) {
+                        localModelList.add(modelItem)
+                    }
                 }
+            } catch (e: Exception) {
+                Log.e("ModelUtils", "Error loading or deserializing local models", e)
+                // Optionally, clear corrupted prefs: sharedPreferences.edit().remove(KEY_LOCAL_MODELS).apply()
             }
         }
     }
 
     fun addUserDefinedLocalModel(name: String, path: String) {
-        val modelItem = ModelItem.fromLocalModel(name, path)
-        modelItem.extras["userDefined"] = "true" // Mark as user-defined
+        // Validate name and path if necessary
+        if (name.isBlank() || path.isBlank()) {
+            Log.e("ModelUtils", "Attempted to add local model with blank name or path.")
+            return
+        }
 
-        // Avoid duplicates based on modelId, which is derived from name and path in fromLocalModel
+        val modelItem = ModelItem.fromLocalModel(name, path)
+        // No longer using extras to mark as userDefined
+
+        // Avoid duplicates based on modelId (which is derived from name/path by fromLocalModel)
         if (localModelList.none { it.modelId == modelItem.modelId }) {
             localModelList.add(0, modelItem) // Add to the beginning of the list
             saveUserDefinedLocalModels()
+        } else {
+            Log.w("ModelUtils", "Attempted to add duplicate local model: ${modelItem.modelId}")
         }
     }
 
     fun removeUserDefinedLocalModel(modelId: String) {
-        val removed = localModelList.removeAll { it.modelId == modelId && it.extras["userDefined"] == "true" }
-        if (removed) {
+        // Remove based on modelId. No longer need to check extras.
+        val initialSize = localModelList.size
+        localModelList.removeAll { it.modelId == modelId }
+        
+        if (localModelList.size < initialSize) { // Check if any item was actually removed
             saveUserDefinedLocalModels()
         }
     }

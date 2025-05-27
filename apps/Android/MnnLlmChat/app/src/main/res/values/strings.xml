@@ -102,4 +102,6 @@
     <string name="audio_output_confirm">Audio Output is very slow for now, Would you like to continue anyway?</string>
     <string name="confirm_delete_model_title">Confirm Deletion</string>
     <string name="confirm_delete_model_message">Are you sure you want to delete this model? This action cannot be undone.</string>
+    <string name="model_status_local">Local</string>
+    <string name="model_status_local_fallback">Local Model</string>
 </resources>

@@ -72,8 +72,7 @@ class ModelListPresenter(private val context: Context, private val view: ModelLi
                 val localDownloadInfo = DownloadInfo()
                 localDownloadInfo.downlodaState = DownloadInfo.DownloadSate.COMPLETED
                 localDownloadInfo.progressStage = context.getString(R.string.model_status_local) // Using a string resource
-                localDownloadInfo.totalBytes = 1L // Placeholder
-                localDownloadInfo.downloadedBytes = 1L // Placeholder
+                // Removed direct assignment to totalBytes and downloadedBytes
                 modelItemDownloadState.downloadInfo = localDownloadInfo
             } else {
                 modelItemDownloadState.downloadInfo = modelDownloadManager.getDownloadInfo(repoItem.modelId!!)
